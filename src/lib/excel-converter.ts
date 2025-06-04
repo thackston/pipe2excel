@@ -6,30 +6,24 @@ export interface ConversionResult {
   blob: Blob;
 }
 
-// This function remains as it's a good utility for naming individual sheets.
 function getExcelSheetName(originalFileName: string): string {
   const lowerFileName = originalFileName.toLowerCase();
   let tabName = "";
 
-  // Rule 1 & 2: Determine base tab name
   if (lowerFileName.includes("service") || lowerFileName.includes("emr")) {
     tabName = "EMR";
   } else if (lowerFileName.includes("lab")) {
     tabName = "Lab";
   } else {
     let baseName = originalFileName.replace(/\.(txt|pipe)$/i, "");
-    // Leave some room for _Audit if it needs to be appended, and general limit.
     baseName = baseName.substring(0, 25); 
     tabName = baseName;
   }
 
-  // Rule 3: Append "Audit"
   if (lowerFileName.includes("audit")) {
-    // If tabName was derived from filename, ensure it doesn't exceed limits with _Audit
     if (tabName.length + "_Audit".length > 31) {
         tabName = tabName.substring(0, 31 - "_Audit".length);
     }
-    // Ensure Audit is appended only once if already part of the name or base derived name
     if (!tabName.toLowerCase().endsWith("audit")){
       tabName = `${tabName}_Audit`;
     }
@@ -53,16 +47,17 @@ function getExcelSheetName(originalFileName: string): string {
   return tabName;
 }
 
-// Original function for single file conversion (can be kept for other uses or removed if not needed)
 export function convertPipeToExcel(fileContent: string, originalFileName: string): ConversionResult {
-  const lines = fileContent.trim().split('\\n');
-  if (lines.length === 0) {
-    throw new Error('File is empty or has no content.');
-  }
+  // Split by actual newline character
+  const lines = fileContent.split('\n');
+  
+  // Trim each line and then filter out those that become empty
+  const nonEmptyLines = lines
+    .map(line => line.trim())
+    .filter(line => line !== '');
 
-  const nonEmptyLines = lines.filter(line => line.trim() !== '');
   if (nonEmptyLines.length === 0) {
-    throw new Error('File contains only whitespace or is effectively empty.');
+    throw new Error('File is empty or has no content after trimming.');
   }
 
   const data = nonEmptyLines.map(line => line.split('|').map(cell => cell.trim()));
@@ -81,7 +76,6 @@ export function convertPipeToExcel(fileContent: string, originalFileName: string
   return { fileName: newFileName, blob };
 }
 
-// New function for converting multiple files into one Excel with multiple sheets
 export function convertMultiplePipesToExcel(
   filesData: Array<{ content: string; originalFileName: string }>,
   outputExcelFileName: string
@@ -93,25 +87,28 @@ export function convertMultiplePipesToExcel(
   const workbook = XLSX.utils.book_new();
   const usedSheetNames = new Set<string>();
 
-  filesData.forEach((file, index) => {
-    const lines = file.content.trim().split('\\n');
-    const nonEmptyLines = lines.filter(line => line.trim() !== '');
+  filesData.forEach((file) => {
+    // Split by actual newline character
+    const lines = file.content.split('\n');
+
+    // Trim each line and then filter out those that become empty
+    const nonEmptyLines = lines
+      .map(line => line.trim())
+      .filter(line => line !== '');
 
     if (nonEmptyLines.length === 0) {
-      // Optionally, skip this file or throw an error for this specific file
-      console.warn(`File ${file.originalFileName} is empty or has no content. Skipping.`);
-      return; // Skip this file
+      console.warn(`File ${file.originalFileName} is empty or has no content after trimming. Skipping.`);
+      return; 
     }
 
     const data = nonEmptyLines.map(line => line.split('|').map(cell => cell.trim()));
     const worksheet = XLSX.utils.aoa_to_sheet(data);
     
     let sheetName = getExcelSheetName(file.originalFileName);
-    // Ensure unique sheet names if base names collide after sanitization
     let suffix = 1;
     let finalSheetName = sheetName;
     while(usedSheetNames.has(finalSheetName)) {
-        finalSheetName = `${sheetName.substring(0, 31 - String(suffix).length -1 )}_${suffix}`; // Ensure space for suffix
+        finalSheetName = `${sheetName.substring(0, 31 - String(suffix).length -1 )}_${suffix}`;
         suffix++;
     }
     usedSheetNames.add(finalSheetName);
@@ -128,5 +125,3 @@ export function convertMultiplePipesToExcel(
   
   return { fileName: outputExcelFileName, blob };
 }
-
-    
