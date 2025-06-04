@@ -87,7 +87,11 @@ export function FileUploadArea() {
       return "Output.xlsx"; // Should not happen if button is disabled
     }
     if (selectedFiles.length === 1) {
-      return selectedFiles[0].name.replace(/\.(txt|pipe)$/i, ".xlsx");
+      let baseName = selectedFiles[0].name.replace(/\.(txt|pipe)$/i, "");
+      baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, "");
+      if (baseName.endsWith('_')) baseName = baseName.slice(0, -1);
+      if (baseName.startsWith('_')) baseName = baseName.slice(1);
+      return `${baseName || "Output"}.xlsx`; // Fallback if name becomes empty
     }
 
     // Multiple files: Check for EMR or Service
@@ -97,13 +101,18 @@ export function FileUploadArea() {
 
     if (primaryFile) {
       let baseName = primaryFile.name.replace(/\.(txt|pipe)$/i, "");
-      baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, ""); // Remove "Audit" (case-insensitive) and trim trailing/leading underscores
-      if (baseName.endsWith('_')) baseName = baseName.slice(0, -1); // Ensure clean name if audit was at the end
+      baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, "");
+      if (baseName.endsWith('_')) baseName = baseName.slice(0, -1);
       if (baseName.startsWith('_')) baseName = baseName.slice(1);
       return `${baseName || "Combined_Output"}.xlsx`; // Fallback if name becomes empty
     }
 
-    return "Combined_Output.xlsx";
+    // Fallback for multiple files if no EMR/Service: Use the first selected file.
+    let baseName = selectedFiles[0].name.replace(/\.(txt|pipe)$/i, "");
+    baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, "");
+    if (baseName.endsWith('_')) baseName = baseName.slice(0, -1);
+    if (baseName.startsWith('_')) baseName = baseName.slice(1);
+    return `${baseName || "Combined_Output"}.xlsx`; // Fallback if name becomes empty
   };
 
 
