@@ -6,6 +6,7 @@ export interface ConversionResult {
   blob: Blob;
 }
 
+// This function remains as it's a good utility for naming individual sheets.
 function getExcelSheetName(originalFileName: string): string {
   const lowerFileName = originalFileName.toLowerCase();
   let tabName = "";
@@ -16,9 +17,8 @@ function getExcelSheetName(originalFileName: string): string {
   } else if (lowerFileName.includes("lab")) {
     tabName = "Lab";
   } else {
-    // Default: use a sanitized version of the original filename (without extension)
     let baseName = originalFileName.replace(/\.(txt|pipe)$/i, "");
-    // Leave some room for _Audit if it needs to be appended
+    // Leave some room for _Audit if it needs to be appended, and general limit.
     baseName = baseName.substring(0, 25); 
     tabName = baseName;
   }
@@ -29,16 +29,14 @@ function getExcelSheetName(originalFileName: string): string {
     if (tabName.length + "_Audit".length > 31) {
         tabName = tabName.substring(0, 31 - "_Audit".length);
     }
-    tabName = `${tabName}_Audit`;
+    // Ensure Audit is appended only once if already part of the name or base derived name
+    if (!tabName.toLowerCase().endsWith("audit")){
+      tabName = `${tabName}_Audit`;
+    }
   }
 
-  // Sanitize for Excel tab name constraints
-  // Max length: 31 characters
-  // Cannot contain: []*/\? :
-  // Cannot start or end with a single quote '
-  tabName = tabName.replace(/[\[\]\*\/\\\?\:]/g, ""); // Remove forbidden characters
+  tabName = tabName.replace(/[\[\]\*\/\\\?\:]/g, "");
   
-  // Remove leading/trailing single quotes if they exist
   if (tabName.startsWith("'")) {
     tabName = tabName.substring(1);
   }
@@ -46,24 +44,22 @@ function getExcelSheetName(originalFileName: string): string {
     tabName = tabName.slice(0, -1);
   }
   
-  // Truncate to 31 characters
   tabName = tabName.substring(0, 31);
 
-  // Ensure tab name is not empty
   if (!tabName.trim()) {
-    return "Sheet1"; // Fallback to "Sheet1" if name becomes empty after sanitization
+    return "Sheet1"; 
   }
 
   return tabName;
 }
 
+// Original function for single file conversion (can be kept for other uses or removed if not needed)
 export function convertPipeToExcel(fileContent: string, originalFileName: string): ConversionResult {
-  const lines = fileContent.trim().split('\n');
+  const lines = fileContent.trim().split('\\n');
   if (lines.length === 0) {
     throw new Error('File is empty or has no content.');
   }
 
-  // Filter out empty lines that might result from multiple newlines
   const nonEmptyLines = lines.filter(line => line.trim() !== '');
   if (nonEmptyLines.length === 0) {
     throw new Error('File contains only whitespace or is effectively empty.');
@@ -84,3 +80,53 @@ export function convertPipeToExcel(fileContent: string, originalFileName: string
 
   return { fileName: newFileName, blob };
 }
+
+// New function for converting multiple files into one Excel with multiple sheets
+export function convertMultiplePipesToExcel(
+  filesData: Array<{ content: string; originalFileName: string }>,
+  outputExcelFileName: string
+): ConversionResult {
+  if (!filesData || filesData.length === 0) {
+    throw new Error('No files provided for conversion.');
+  }
+
+  const workbook = XLSX.utils.book_new();
+  const usedSheetNames = new Set<string>();
+
+  filesData.forEach((file, index) => {
+    const lines = file.content.trim().split('\\n');
+    const nonEmptyLines = lines.filter(line => line.trim() !== '');
+
+    if (nonEmptyLines.length === 0) {
+      // Optionally, skip this file or throw an error for this specific file
+      console.warn(`File ${file.originalFileName} is empty or has no content. Skipping.`);
+      return; // Skip this file
+    }
+
+    const data = nonEmptyLines.map(line => line.split('|').map(cell => cell.trim()));
+    const worksheet = XLSX.utils.aoa_to_sheet(data);
+    
+    let sheetName = getExcelSheetName(file.originalFileName);
+    // Ensure unique sheet names if base names collide after sanitization
+    let suffix = 1;
+    let finalSheetName = sheetName;
+    while(usedSheetNames.has(finalSheetName)) {
+        finalSheetName = `${sheetName.substring(0, 31 - String(suffix).length -1 )}_${suffix}`; // Ensure space for suffix
+        suffix++;
+    }
+    usedSheetNames.add(finalSheetName);
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, finalSheetName);
+  });
+
+  if (workbook.SheetNames.length === 0) {
+    throw new Error('No valid data found in any of the provided files to create an Excel sheet.');
+  }
+
+  const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  
+  return { fileName: outputExcelFileName, blob };
+}
+
+    

@@ -1,13 +1,14 @@
+
 'use client';
 
 import type React from 'react';
 import { useState, useCallback, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { convertPipeToExcel, type ConversionResult } from '@/lib/excel-converter';
+import { convertMultiplePipesToExcel, type ConversionResult } from '@/lib/excel-converter';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { UploadCloud, FileText } from 'lucide-react';
+import { UploadCloud, FileText, XCircle } from 'lucide-react';
 import { LoadingSpinner } from './LoadingSpinner';
 import { FileItem } from './FileItem';
 
@@ -16,28 +17,42 @@ interface ProcessedFile extends ConversionResult {
 }
 
 export function FileUploadArea() {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processedFiles, setProcessedFiles] = useState<ProcessedFile[]>([]);
+  const [processedExcelFile, setProcessedExcelFile] = useState<ProcessedFile | null>(null);
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files[0]) {
-      const file = event.target.files[0];
-      if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe')) {
-        setSelectedFile(file);
-      } else {
-        toast({
-          title: 'Invalid File Type',
-          description: 'Please upload a .txt or .pipe file.',
-          variant: 'destructive',
-        });
-        setSelectedFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ''; // Reset file input
+    if (event.target.files) {
+      const filesArray = Array.from(event.target.files);
+      const validFiles = filesArray.filter(file => {
+        if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe')) {
+          return true;
+        } else {
+          toast({
+            title: 'Invalid File Type',
+            description: `${file.name} is not a .txt or .pipe file and was ignored.`,
+            variant: 'destructive',
+          });
+          return false;
         }
+      });
+      setSelectedFiles(prev => [...prev, ...validFiles]);
+      // Clear the input value to allow re-selecting the same file(s) if needed after removal
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
       }
+    }
+  };
+
+  const removeSelectedFile = (fileNameToRemove: string) => {
+    setSelectedFiles(prev => prev.filter(file => file.name !== fileNameToRemove));
+    // If all files are removed, ensure the input is also reset if it held these files
+    if (selectedFiles.length === 1 && selectedFiles[0].name === fileNameToRemove) {
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
     }
   };
 
@@ -45,23 +60,24 @@ export function FileUploadArea() {
     event.preventDefault();
     event.stopPropagation();
     if (isProcessing) return;
-    if (event.dataTransfer.files && event.dataTransfer.files[0]) {
-      const file = event.dataTransfer.files[0];
-      if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe')) {
-        setSelectedFile(file);
-         if (fileInputRef.current) {
-          // Simulate file selection for the input if needed, or just use the dropped file state
-           const dataTransfer = new DataTransfer();
-           dataTransfer.items.add(file);
-           fileInputRef.current.files = dataTransfer.files;
+
+    if (event.dataTransfer.files) {
+      const filesArray = Array.from(event.dataTransfer.files);
+      const validFiles = filesArray.filter(file => {
+        if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe')) {
+          return true;
+        } else {
+          toast({
+            title: 'Invalid File Type',
+            description: `${file.name} is not a .txt or .pipe file and was ignored.`,
+            variant: 'destructive',
+          });
+          return false;
         }
-      } else {
-        toast({
-          title: 'Invalid File Type',
-          description: 'Please upload a .txt or .pipe file.',
-          variant: 'destructive',
-        });
-      }
+      });
+      setSelectedFiles(prev => [...prev, ...validFiles]);
+      // For drag and drop, we don't directly manipulate fileInputRef.files in the same way
+      // The state `selectedFiles` is the source of truth for dropped files.
     }
   }, [isProcessing, toast]);
 
@@ -70,25 +86,44 @@ export function FileUploadArea() {
     event.stopPropagation();
   }, []);
 
-  const processFile = async () => {
-    if (!selectedFile) {
+  const processFiles = async () => {
+    if (selectedFiles.length === 0) {
       toast({
-        title: 'No File Selected',
-        description: 'Please select a file to convert.',
+        title: 'No Files Selected',
+        description: 'Please select one or more files to convert.',
         variant: 'destructive',
       });
       return;
     }
 
     setIsProcessing(true);
+    setProcessedExcelFile(null); 
+
     try {
-      const fileContent = await selectedFile.text();
-      const result = convertPipeToExcel(fileContent, selectedFile.name);
+      const filesToConvert = await Promise.all(
+        selectedFiles.map(async file => {
+          const content = await file.text();
+          return { content, originalFileName: file.name };
+        })
+      );
+
+      if (filesToConvert.length === 0) {
+        toast({
+          title: 'No valid content',
+          description: 'Selected files appear to be empty or invalid.',
+          variant: 'destructive',
+        });
+        setIsProcessing(false);
+        return;
+      }
       
-      setProcessedFiles(prev => [{ ...result, id: Date.now().toString() }, ...prev].slice(0, 5)); // Keep last 5
+      const outputFileName = selectedFiles.length > 1 ? "Combined_Output.xlsx" : selectedFiles[0].name.replace(/\.(txt|pipe)$/i, ".xlsx");
+      const result = convertMultiplePipesToExcel(filesToConvert, outputFileName);
+      
+      setProcessedExcelFile({ ...result, id: Date.now().toString() });
       toast({
         title: 'Conversion Successful',
-        description: `${result.fileName} is ready for download.`,
+        description: `${result.fileName} with ${filesToConvert.length} sheet(s) is ready for download.`,
       });
 
     } catch (error) {
@@ -101,9 +136,9 @@ export function FileUploadArea() {
       });
     } finally {
       setIsProcessing(false);
-      setSelectedFile(null); 
+      setSelectedFiles([]); 
       if (fileInputRef.current) {
-        fileInputRef.current.value = ''; // Reset file input
+        fileInputRef.current.value = '';
       }
     }
   };
@@ -126,7 +161,7 @@ export function FileUploadArea() {
           Pipe to Excel Converter
         </CardTitle>
         <CardDescription className="text-center text-muted-foreground pt-1">
-          Upload your pipe-delimited .txt or .pipe file to convert it into an .xlsx spreadsheet.
+          Upload one or more pipe-delimited .txt or .pipe files. They will be combined into a single .xlsx spreadsheet, each on its own tab.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6 p-6">
@@ -138,12 +173,13 @@ export function FileUploadArea() {
           role="button"
           tabIndex={0}
           onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileInputRef.current?.click()}
+          aria-label="File upload area"
         >
           <UploadCloud className="w-12 h-12 mb-3 text-primary" />
           <p className="mb-1 text-base font-medium text-foreground">
             <span className="font-semibold">Click to upload</span> or drag and drop
           </p>
-          <p className="text-xs text-muted-foreground">TXT or PIPE files (Max 5MB)</p>
+          <p className="text-xs text-muted-foreground">TXT or PIPE files (Max 5MB each)</p>
           <Input
             ref={fileInputRef}
             id="file-upload-input"
@@ -151,21 +187,30 @@ export function FileUploadArea() {
             accept=".txt,.pipe,text/plain"
             onChange={handleFileChange}
             className="hidden"
+            multiple // Allow multiple file selection
           />
         </div>
 
-        {selectedFile && !isProcessing && (
-          <div className="p-3 border rounded-md bg-secondary/50">
-            <div className="flex items-center space-x-2">
-              <FileText className="w-5 h-5 text-primary" />
-              <span className="text-sm font-medium text-secondary-foreground">{selectedFile.name}</span>
-            </div>
+        {selectedFiles.length > 0 && !isProcessing && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium text-foreground">Selected files:</h4>
+            {selectedFiles.map(file => (
+              <div key={file.name} className="flex items-center justify-between p-2 border rounded-md bg-secondary/50">
+                <div className="flex items-center space-x-2 truncate">
+                  <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+                  <span className="text-sm font-medium text-secondary-foreground truncate" title={file.name}>{file.name}</span>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => removeSelectedFile(file.name)} aria-label={`Remove ${file.name}`}>
+                  <XCircle className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                </Button>
+              </div>
+            ))}
           </div>
         )}
 
         <Button
-          onClick={processFile}
-          disabled={!selectedFile || isProcessing}
+          onClick={processFiles}
+          disabled={selectedFiles.length === 0 || isProcessing}
           className="w-full h-12 text-base rounded-lg shadow-md hover:shadow-lg transition-shadow"
           size="lg"
         >
@@ -174,21 +219,19 @@ export function FileUploadArea() {
               <LoadingSpinner /> <span className="ml-2">Processing...</span>
             </>
           ) : (
-            'Convert to Excel'
+            `Convert ${selectedFiles.length > 0 ? selectedFiles.length : ''} file(s) to Excel`
           )}
         </Button>
 
-        {processedFiles.length > 0 && (
+        {processedExcelFile && (
           <div className="mt-8">
-            <h3 className="mb-3 text-xl font-semibold text-foreground">Download Files:</h3>
+            <h3 className="mb-3 text-xl font-semibold text-foreground">Download Your Combined File:</h3>
             <div className="space-y-2 max-h-72 overflow-y-auto p-1 rounded-md border bg-white/50">
-              {processedFiles.map((file) => (
-                <FileItem
-                  key={file.id}
-                  fileName={file.fileName}
-                  onDownload={() => downloadProcessedFile(file.blob, file.fileName)}
-                />
-              ))}
+              <FileItem
+                key={processedExcelFile.id}
+                fileName={processedExcelFile.fileName}
+                onDownload={() => downloadProcessedFile(processedExcelFile.blob, processedExcelFile.fileName)}
+              />
             </div>
           </div>
         )}
@@ -196,3 +239,5 @@ export function FileUploadArea() {
     </Card>
   );
 }
+
+    
