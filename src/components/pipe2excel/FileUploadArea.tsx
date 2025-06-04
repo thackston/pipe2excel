@@ -39,7 +39,6 @@ export function FileUploadArea() {
         }
       });
       setSelectedFiles(prev => [...prev, ...validFiles]);
-      // Clear the input value to allow re-selecting the same file(s) if needed after removal
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -48,7 +47,6 @@ export function FileUploadArea() {
 
   const removeSelectedFile = (fileNameToRemove: string) => {
     setSelectedFiles(prev => prev.filter(file => file.name !== fileNameToRemove));
-    // If all files are removed, ensure the input is also reset if it held these files
     if (selectedFiles.length === 1 && selectedFiles[0].name === fileNameToRemove) {
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
@@ -76,8 +74,6 @@ export function FileUploadArea() {
         }
       });
       setSelectedFiles(prev => [...prev, ...validFiles]);
-      // For drag and drop, we don't directly manipulate fileInputRef.files in the same way
-      // The state `selectedFiles` is the source of truth for dropped files.
     }
   }, [isProcessing, toast]);
 
@@ -85,6 +81,31 @@ export function FileUploadArea() {
     event.preventDefault();
     event.stopPropagation();
   }, []);
+
+  const getOutputFileName = (): string => {
+    if (selectedFiles.length === 0) {
+      return "Output.xlsx"; // Should not happen if button is disabled
+    }
+    if (selectedFiles.length === 1) {
+      return selectedFiles[0].name.replace(/\.(txt|pipe)$/i, ".xlsx");
+    }
+
+    // Multiple files: Check for EMR or Service
+    const primaryFile = selectedFiles.find(file =>
+      file.name.toLowerCase().includes("emr") || file.name.toLowerCase().includes("service")
+    );
+
+    if (primaryFile) {
+      let baseName = primaryFile.name.replace(/\.(txt|pipe)$/i, "");
+      baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, ""); // Remove "Audit" (case-insensitive) and trim trailing/leading underscores
+      if (baseName.endsWith('_')) baseName = baseName.slice(0, -1); // Ensure clean name if audit was at the end
+      if (baseName.startsWith('_')) baseName = baseName.slice(1);
+      return `${baseName || "Combined_Output"}.xlsx`; // Fallback if name becomes empty
+    }
+
+    return "Combined_Output.xlsx";
+  };
+
 
   const processFiles = async () => {
     if (selectedFiles.length === 0) {
@@ -117,7 +138,7 @@ export function FileUploadArea() {
         return;
       }
       
-      const outputFileName = selectedFiles.length > 1 ? "Combined_Output.xlsx" : selectedFiles[0].name.replace(/\.(txt|pipe)$/i, ".xlsx");
+      const outputFileName = getOutputFileName();
       const result = convertMultiplePipesToExcel(filesToConvert, outputFileName);
       
       setProcessedExcelFile({ ...result, id: Date.now().toString() });
@@ -187,7 +208,7 @@ export function FileUploadArea() {
             accept=".txt,.pipe,text/plain"
             onChange={handleFileChange}
             className="hidden"
-            multiple // Allow multiple file selection
+            multiple
           />
         </div>
 
@@ -239,5 +260,4 @@ export function FileUploadArea() {
     </Card>
   );
 }
-
     
