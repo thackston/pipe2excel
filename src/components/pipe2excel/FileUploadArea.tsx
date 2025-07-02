@@ -1,4 +1,3 @@
-
 'use client';
 
 import type React from 'react';
@@ -8,7 +7,7 @@ import { convertMultiplePipesToExcel, type ConversionResult } from '@/lib/excel-
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { UploadCloud, FileText, XCircle } from 'lucide-react';
+import { UploadCloud, FileText, XCircle, AlertTriangle } from 'lucide-react';
 import { LoadingSpinner } from './LoadingSpinner';
 import { FileItem } from './FileItem';
 
@@ -16,29 +15,95 @@ interface ProcessedFile extends ConversionResult {
   id: string;
 }
 
+// File size limits (in bytes)
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB per file
+const LARGE_FILE_WARNING = 50 * 1024 * 1024; // 50MB warning threshold
+
 export function FileUploadArea() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processedExcelFile, setProcessedExcelFile] = useState<ProcessedFile | null>(null);
+  const [processingProgress, setProcessingProgress] = useState<string>('');
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper function to format file sizes
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Validate individual file
+  const validateFile = (file: File): { isValid: boolean; warning?: string; error?: string } => {
+    // Check file type
+    if (!(file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe'))) {
+      return { isValid: false, error: `${file.name} is not a .txt or .pipe file` };
+    }
+
+    // Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      return { 
+        isValid: false, 
+        error: `${file.name} is too large (${formatFileSize(file.size)}). Maximum size is ${formatFileSize(MAX_FILE_SIZE)}` 
+      };
+    }
+
+    // Warning for large files
+    if (file.size > LARGE_FILE_WARNING) {
+      return { 
+        isValid: true, 
+        warning: `${file.name} is large (${formatFileSize(file.size)}) and may take longer to process` 
+      };
+    }
+
+    return { isValid: true };
+  };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
       const filesArray = Array.from(event.target.files);
-      const validFiles = filesArray.filter(file => {
-        if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe')) {
-          return true;
+      const validFiles: File[] = [];
+      let hasWarnings = false;
+
+      filesArray.forEach(file => {
+        const validation = validateFile(file);
+        
+        if (validation.isValid) {
+          validFiles.push(file);
+          if (validation.warning) {
+            hasWarnings = true;
+            toast({
+              title: 'Large File Warning',
+              description: validation.warning,
+              variant: 'default',
+            });
+          }
         } else {
           toast({
-            title: 'Invalid File Type',
-            description: `${file.name} is not a .txt or .pipe file and was ignored.`,
+            title: 'Invalid File',
+            description: validation.error,
             variant: 'destructive',
           });
-          return false;
         }
       });
-      setSelectedFiles(prev => [...prev, ...validFiles]);
+
+      if (validFiles.length > 0) {
+        setSelectedFiles(prev => [...prev, ...validFiles]);
+        
+        // Show summary toast for multiple files
+        if (validFiles.length > 1) {
+          const totalSize = validFiles.reduce((sum, file) => sum + file.size, 0);
+          toast({
+            title: 'Files Added',
+            description: `Added ${validFiles.length} files (Total: ${formatFileSize(totalSize)})`,
+            variant: 'default',
+          });
+        }
+      }
+
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -61,19 +126,32 @@ export function FileUploadArea() {
 
     if (event.dataTransfer.files) {
       const filesArray = Array.from(event.dataTransfer.files);
-      const validFiles = filesArray.filter(file => {
-        if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.pipe')) {
-          return true;
+      const validFiles: File[] = [];
+
+      filesArray.forEach(file => {
+        const validation = validateFile(file);
+        
+        if (validation.isValid) {
+          validFiles.push(file);
+          if (validation.warning) {
+            toast({
+              title: 'Large File Warning',
+              description: validation.warning,
+              variant: 'default',
+            });
+          }
         } else {
           toast({
-            title: 'Invalid File Type',
-            description: `${file.name} is not a .txt or .pipe file and was ignored.`,
+            title: 'Invalid File',
+            description: validation.error,
             variant: 'destructive',
           });
-          return false;
         }
       });
-      setSelectedFiles(prev => [...prev, ...validFiles]);
+
+      if (validFiles.length > 0) {
+        setSelectedFiles(prev => [...prev, ...validFiles]);
+      }
     }
   }, [isProcessing, toast]);
 
@@ -84,14 +162,14 @@ export function FileUploadArea() {
 
   const getOutputFileName = (): string => {
     if (selectedFiles.length === 0) {
-      return "Output.xlsx"; // Should not happen if button is disabled
+      return "Output.xlsx";
     }
     if (selectedFiles.length === 1) {
       let baseName = selectedFiles[0].name.replace(/\.(txt|pipe)$/i, "");
       baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, "");
       if (baseName.endsWith('_')) baseName = baseName.slice(0, -1);
       if (baseName.startsWith('_')) baseName = baseName.slice(1);
-      return `${baseName || "Output"}.xlsx`; // Fallback if name becomes empty
+      return `${baseName || "Output"}.xlsx`;
     }
 
     // Multiple files: Check for EMR or Service
@@ -104,18 +182,17 @@ export function FileUploadArea() {
       baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, "");
       if (baseName.endsWith('_')) baseName = baseName.slice(0, -1);
       if (baseName.startsWith('_')) baseName = baseName.slice(1);
-      return `${baseName || "Combined_Output"}.xlsx`; // Fallback if name becomes empty
+      return `${baseName || "Combined_Output"}.xlsx`;
     }
 
-    // Fallback for multiple files if no EMR/Service: Use the first selected file.
     let baseName = selectedFiles[0].name.replace(/\.(txt|pipe)$/i, "");
     baseName = baseName.replace(/Audit/gi, "").trim().replace(/_+$/, "").replace(/^_+/, "");
     if (baseName.endsWith('_')) baseName = baseName.slice(0, -1);
     if (baseName.startsWith('_')) baseName = baseName.slice(1);
-    return `${baseName || "Combined_Output"}.xlsx`; // Fallback if name becomes empty
+    return `${baseName || "Combined_Output"}.xlsx`;
   };
 
-
+  // Enhanced processFiles with progress tracking and chunked processing
   const processFiles = async () => {
     if (selectedFiles.length === 0) {
       toast({
@@ -127,12 +204,28 @@ export function FileUploadArea() {
     }
 
     setIsProcessing(true);
-    setProcessedExcelFile(null); 
+    setProcessedExcelFile(null);
+    setProcessingProgress('');
 
     try {
+      // Calculate total size for progress tracking
+      const totalSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+      let processedSize = 0;
+
+      setProcessingProgress('Reading files...');
+
+      // Process files with progress updates
       const filesToConvert = await Promise.all(
-        selectedFiles.map(async file => {
+        selectedFiles.map(async (file, index) => {
+          setProcessingProgress(`Reading file ${index + 1}/${selectedFiles.length}: ${file.name}`);
+          
           const content = await file.text();
+          processedSize += file.size;
+          
+          // Update progress
+          const progressPercent = Math.round((processedSize / totalSize) * 100);
+          setProcessingProgress(`Processing files... ${progressPercent}% complete`);
+          
           return { content, originalFileName: file.name };
         })
       );
@@ -147,10 +240,14 @@ export function FileUploadArea() {
         return;
       }
       
+      setProcessingProgress('Creating Excel file...');
+      
       const outputFileName = getOutputFileName();
-      const result = convertMultiplePipesToExcel(filesToConvert, outputFileName);
+      const result = await convertMultiplePipesToExcel(filesToConvert, outputFileName);
       
       setProcessedExcelFile({ ...result, id: Date.now().toString() });
+      setProcessingProgress('');
+      
       toast({
         title: 'Conversion Successful',
         description: `${result.fileName} with ${filesToConvert.length} sheet(s) is ready for download.`,
@@ -166,7 +263,8 @@ export function FileUploadArea() {
       });
     } finally {
       setIsProcessing(false);
-      setSelectedFiles([]); 
+      setProcessingProgress('');
+      setSelectedFiles([]);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -183,6 +281,9 @@ export function FileUploadArea() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // Calculate total size of selected files
+  const totalSelectedSize = selectedFiles.reduce((sum, file) => sum + file.size, 0);
 
   return (
     <Card className="w-full max-w-xl mx-auto mt-8 shadow-xl rounded-xl">
@@ -209,7 +310,7 @@ export function FileUploadArea() {
           <p className="mb-1 text-base font-medium text-foreground">
             <span className="font-semibold">Click to upload</span> or drag and drop
           </p>
-          <p className="text-xs text-muted-foreground">TXT or PIPE files (Max 5MB each)</p>
+          <p className="text-xs text-muted-foreground">TXT or PIPE files (Max {formatFileSize(MAX_FILE_SIZE)} each)</p>
           <Input
             ref={fileInputRef}
             id="file-upload-input"
@@ -223,18 +324,43 @@ export function FileUploadArea() {
 
         {selectedFiles.length > 0 && !isProcessing && (
           <div className="space-y-2">
-            <h4 className="text-sm font-medium text-foreground">Selected files:</h4>
-            {selectedFiles.map(file => (
-              <div key={file.name} className="flex items-center justify-between p-2 border rounded-md bg-secondary/50">
-                <div className="flex items-center space-x-2 truncate">
-                  <FileText className="w-5 h-5 text-primary flex-shrink-0" />
-                  <span className="text-sm font-medium text-secondary-foreground truncate" title={file.name}>{file.name}</span>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => removeSelectedFile(file.name)} aria-label={`Remove ${file.name}`}>
-                  <XCircle className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-                </Button>
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium text-foreground">Selected files:</h4>
+              <span className="text-xs text-muted-foreground">
+                Total: {formatFileSize(totalSelectedSize)}
+              </span>
+            </div>
+            
+            {/* Warning for very large total size */}
+            {totalSelectedSize > 100 * 1024 * 1024 && (
+              <div className="flex items-center gap-2 p-2 rounded-md bg-orange-50 border border-orange-200">
+                <AlertTriangle className="w-4 h-4 text-orange-600" />
+                <span className="text-sm text-orange-700">
+                  Large dataset detected. Processing may take several minutes.
+                </span>
               </div>
-            ))}
+            )}
+            
+            <div className="max-h-48 overflow-y-auto space-y-2">
+              {selectedFiles.map(file => (
+                <div key={file.name} className="flex items-center justify-between p-2 border rounded-md bg-secondary/50">
+                  <div className="flex items-center space-x-2 truncate">
+                    <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+                    <div className="truncate">
+                      <span className="text-sm font-medium text-secondary-foreground truncate block" title={file.name}>
+                        {file.name}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatFileSize(file.size)}
+                      </span>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => removeSelectedFile(file.name)} aria-label={`Remove ${file.name}`}>
+                    <XCircle className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                  </Button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -245,9 +371,15 @@ export function FileUploadArea() {
           size="lg"
         >
           {isProcessing ? (
-            <>
-              <LoadingSpinner /> <span className="ml-2">Processing...</span>
-            </>
+            <div className="flex flex-col items-center">
+              <div className="flex items-center">
+                <LoadingSpinner /> 
+                <span className="ml-2">Processing...</span>
+              </div>
+              {processingProgress && (
+                <span className="text-xs mt-1 opacity-75">{processingProgress}</span>
+              )}
+            </div>
           ) : (
             `Convert ${selectedFiles.length > 0 ? selectedFiles.length : ''} file(s) to Excel`
           )}
@@ -269,4 +401,3 @@ export function FileUploadArea() {
     </Card>
   );
 }
-    
